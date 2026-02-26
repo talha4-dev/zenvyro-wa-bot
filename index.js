@@ -4,56 +4,98 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-const VERIFY_TOKEN = "zenvyro_verify_token";
-const ACCESS_TOKEN = "EAAShTZCjEmiABQyw6U48Ods0vES0KOAyOTLvOAkVveNNJGjuFn7HHy6NCPTBotOPfwl45G2hqJ4bcQWSrxGz06XXCAyC8z2In6ZBGw1p62NKBVDVjAz1PaMGufVyQphQsuxfg7CeZCPW9K3Oj5yy5oIxcyn9wFcWLftRqxJru7HlXWyb12gQYjUEGANpCTJSRDy4JMalcwVVQoHPGPav91KyzZBhZB3XFOWt3K1wGN1aYgLIZBNk3uugJ88ZCVuA6VZCoTuBqZAkm0Jq3uSBHfcBuuQZDZD";
-const PHONE_NUMBER_ID = "954365301100871";
+// ✅ Environment Variables (from Render)
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 
-// Webhook verification (required by Meta)
+const PORT = process.env.PORT || 3000;
+
+// ==============================
+// 🔐 Webhook Verification (Meta requires this)
+// ==============================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode && token === VERIFY_TOKEN) {
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ Webhook verified");
     res.status(200).send(challenge);
   } else {
+    console.log("❌ Verification failed");
     res.sendStatus(403);
   }
 });
 
-// Receive messages
+// ==============================
+// 📩 Receive Messages
+// ==============================
 app.post("/webhook", async (req, res) => {
-  const body = req.body;
+  try {
+    const body = req.body;
 
-  if (body.entry) {
-    const message = body.entry[0].changes[0].value.messages?.[0];
-
-    if (message && message.text) {
+    if (
+      body.object &&
+      body.entry &&
+      body.entry[0].changes &&
+      body.entry[0].changes[0].value.messages
+    ) {
+      const message = body.entry[0].changes[0].value.messages[0];
       const from = message.from;
-      const text = message.text.body.toLowerCase();
+      const msgText = message.text?.body?.toLowerCase();
 
-      if (text === "menu") {
-        await axios.post(
-          `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-          {
-            messaging_product: "whatsapp",
-            to: from,
-            text: {
-              body: "🦖 Zenvyro Labs Menu\n\n🍔 Classic – 499\n🍔 Zilla – 699\n🍟 Fries – 299\n\nType order + item name"
-            }
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${ACCESS_TOKEN}`,
-              "Content-Type": "application/json"
-            }
-          }
+      console.log("📩 Message received:", msgText);
+
+      // Auto reply when user types "menu"
+      if (msgText === "menu") {
+        await sendMessage(from, 
+          "👋 Welcome to Zenvyro Labs!\n\n" +
+          "1️⃣ Web Development\n" +
+          "2️⃣ App Development\n" +
+          "3️⃣ AI Automation\n\n" +
+          "Reply with a number to continue."
         );
+      } else {
+        await sendMessage(from, "🤖 Type *menu* to see available options.");
       }
     }
-  }
 
-  res.sendStatus(200);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("❌ Error:", error.response?.data || error.message);
+    res.sendStatus(500);
+  }
 });
 
-app.listen(3000, () => console.log("Bot running on port 3000"));
+// ==============================
+// 📤 Send WhatsApp Message
+// ==============================
+async function sendMessage(to, message) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to: to,
+        type: "text",
+        text: { body: message }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("✅ Message sent");
+  } catch (error) {
+    console.error("❌ Send error:", error.response?.data || error.message);
+  }
+}
+
+// ==============================
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
