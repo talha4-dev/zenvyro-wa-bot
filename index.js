@@ -30,22 +30,6 @@ const menu = {
 // ==============================
 // 🔐 Webhook Verification
 // ==============================
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook verified");
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
-  }
-});
-
-// ==============================
-// 📩 Receive Messages
-// ==============================
 app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
@@ -61,127 +45,98 @@ app.post("/webhook", async (req, res) => {
       const msgText = message.text?.body?.toLowerCase().trim();
 
       if (!userCarts[from]) {
-        userCarts[from] = [];
+        userCarts[from] = {
+          items: [],
+          stage: "browsing"
+        };
       }
 
       console.log("📩 Message:", msgText);
 
       // ==============================
-      // 👋 Greeting
+      // GREETING
       // ==============================
       if (
         msgText.includes("hi") ||
         msgText.includes("hello") ||
-        msgText.includes("salam") ||
-        msgText === "menu"
+        msgText.includes("salam")
       ) {
-        await sendMessage(
-          from,
-          "🍔 *Welcome to Zenvyro Fast Food!*\n\n" +
-            "🔥 Fresh • Hot • Delivered Fast\n\n" +
-            "You can order like this:\n" +
-            "👉 2 zinger\n" +
-            "👉 1 pizza\n" +
-            "👉 3 fries\n\n" +
-            "Our Menu:\n" +
-            "• Zinger - Rs 450\n" +
-            "• Pizza - Rs 899\n" +
-            "• Fries - Rs 250\n" +
-            "• Shawarma - Rs 300\n\n" +
-            "What would you like to order?"
-        );
+        userCarts[from].stage = "browsing";
+        await sendMenu(from);
       }
 
       // ==============================
-      // 🛒 Add Item Logic
+      // MENU / MORE
       // ==============================
-      else if (Object.keys(menu).some(item => msgText.includes(item))) {
-        const quantityMatch = msgText.match(/\d+/);
-        const qty = quantityMatch ? parseInt(quantityMatch[0]) : 1;
-
-        const itemName = Object.keys(menu).find(item =>
-          msgText.includes(item)
-        );
-
-        userCarts[from].push({
-          item: itemName,
-          qty: qty,
-          price: menu[itemName]
-        });
-
-        await sendMessage(
-          from,
-          `✅ ${qty} ${itemName}(s) added to cart.\n\n` +
-            `Type MORE to add more items\n` +
-            `Type CART to view cart\n` +
-            `Type CONFIRM to place order`
-        );
+      else if (msgText === "menu" || msgText === "more") {
+        await sendMenu(from);
       }
 
       // ==============================
-      // 🧾 View Cart
+      // ADD ITEMS (MULTI SUPPORT)
       // ==============================
-      else if (msgText === "cart") {
-        const cart = userCarts[from];
+      else if (containsMenuItem(msgText)) {
+        const items = parseOrder(msgText);
 
-        if (cart.length === 0) {
-          await sendMessage(from, "🛒 Your cart is empty.");
+        if (items.length === 0) {
+          await sendMessage(from, "❌ Could not understand your order.");
         } else {
-          let total = 0;
-          let summary = "🧾 *Your Cart:*\n\n";
-
-          cart.forEach(item => {
-            const itemTotal = item.qty * item.price;
-            total += itemTotal;
-
-            summary += `• ${item.qty} ${item.item} = Rs ${itemTotal}\n`;
+          items.forEach(item => {
+            userCarts[from].items.push(item);
           });
 
-          summary += `\n💰 Total: Rs ${total}\n\nType CONFIRM to order`;
-
-          await sendMessage(from, summary);
-        }
-      }
-
-      // ==============================
-      // ✅ Confirm Order
-      // ==============================
-      else if (msgText === "confirm") {
-        const cart = userCarts[from];
-
-        if (cart.length === 0) {
-          await sendMessage(from, "🛒 Your cart is empty.");
-        } else {
-          userCarts[from] = [];
+          userCarts[from].stage = "ordering";
 
           await sendMessage(
             from,
-            "🎉 *Order Confirmed!*\n\n" +
-              "📍 Please send your location.\n\n" +
-              "Our rider will reach you soon 🚴‍♂️"
+            "✅ Items added to cart!\n\nType CART to view cart\nType CONFIRM to place order"
           );
         }
       }
 
       // ==============================
-      // ❌ Clear Cart
+      // VIEW CART
       // ==============================
-      else if (msgText === "clear") {
-        userCarts[from] = [];
-        await sendMessage(from, "🗑 Cart cleared.");
+      else if (msgText === "cart") {
+        await showCart(from);
       }
 
       // ==============================
-      // 🤖 Fallback
+      // CONFIRM ORDER
       // ==============================
+      else if (msgText === "confirm") {
+        if (userCarts[from].items.length === 0) {
+          await sendMessage(from, "🛒 Your cart is empty.");
+        } else {
+          userCarts[from].stage = "awaiting_address";
+
+          await sendMessage(
+            from,
+            "🎉 Order confirmed!\n\n📍 Please send your delivery address."
+          );
+        }
+      }
+
+      // ==============================
+      // ADDRESS STAGE
+      // ==============================
+      else if (userCarts[from].stage === "awaiting_address") {
+
+        userCarts[from] = {
+          items: [],
+          stage: "browsing"
+        };
+
+        await sendMessage(
+          from,
+          "🚚 Your food is being prepared!\n\n⏳ Estimated delivery: 40–50 minutes\n\nThank you for ordering from Zenvyro Fast Food 🍔"
+        );
+      }
+
       else {
         await sendMessage(
           from,
-          "🤖 I didn’t understand.\n\n" +
-            "Try:\n" +
-            "👉 2 zinger\n" +
-            "👉 1 pizza\n\n" +
-            "Or type MENU"
+          "🤖 I didn’t understand.\n\nType MENU to see food items."
         );
       }
     }
@@ -191,9 +146,7 @@ app.post("/webhook", async (req, res) => {
     console.error("❌ Error:", error.response?.data || error.message);
     res.sendStatus(500);
   }
-});
-
-// ==============================
+});// ==============================
 // 📤 Send Message Function
 // ==============================
 async function sendMessage(to, message) {
@@ -217,7 +170,62 @@ async function sendMessage(to, message) {
     console.error("❌ Send error:", error.response?.data || error.message);
   }
 }
+function sendMenu(to) {
+  return sendMessage(
+    to,
+    "🍔 *Zenvyro Fast Food Menu*\n\n" +
+    "• Zinger - Rs 450\n" +
+    "• Pizza - Rs 899\n" +
+    "• Fries - Rs 250\n" +
+    "• Shawarma - Rs 300\n\n" +
+    "You can order like:\n" +
+    "👉 2 pizza 4 fries"
+  );
+}
 
+function containsMenuItem(text) {
+  return Object.keys(menu).some(item => text.includes(item));
+}
+
+function parseOrder(text) {
+  const items = [];
+  const regex = /(\d+)\s*(zinger|pizza|fries|shawarma)/g;
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const qty = parseInt(match[1]);
+    const item = match[2];
+
+    items.push({
+      item: item,
+      qty: qty,
+      price: menu[item]
+    });
+  }
+
+  return items;
+}
+
+async function showCart(to) {
+  const cart = userCarts[to];
+
+  if (cart.length === 0) {
+    return sendMessage(to, "🛒 Your cart is empty.");
+  }
+
+  let total = 0;
+  let summary = "🧾 *Your Cart:*\n\n";
+
+  cart.forEach(item => {
+    const itemTotal = item.qty * item.price;
+    total += itemTotal;
+    summary += `• ${item.qty} ${item.item} = Rs ${itemTotal}\n`;
+  });
+
+  summary += `\n💰 Total: Rs ${total}\n\nType CONFIRM to order`;
+
+  await sendMessage(to, summary);
+}
 // ==============================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
