@@ -4,15 +4,31 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-// ✅ Environment Variables (from Render)
+// ==============================
+// 🔐 ENV VARIABLES (Render)
+// ==============================
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
-
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const PORT = process.env.PORT || 3000;
 
 // ==============================
-// 🔐 Webhook Verification (Meta requires this)
+// 🛒 In-memory Cart Storage
+// ==============================
+const userCarts = {};
+
+// ==============================
+// 🍔 Menu Data
+// ==============================
+const menu = {
+  zinger: 450,
+  pizza: 899,
+  fries: 250,
+  shawarma: 300
+};
+
+// ==============================
+// 🔐 Webhook Verification
 // ==============================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -23,7 +39,6 @@ app.get("/webhook", (req, res) => {
     console.log("✅ Webhook verified");
     res.status(200).send(challenge);
   } else {
-    console.log("❌ Verification failed");
     res.sendStatus(403);
   }
 });
@@ -43,21 +58,131 @@ app.post("/webhook", async (req, res) => {
     ) {
       const message = body.entry[0].changes[0].value.messages[0];
       const from = message.from;
-      const msgText = message.text?.body?.toLowerCase();
+      const msgText = message.text?.body?.toLowerCase().trim();
 
-      console.log("📩 Message received:", msgText);
+      if (!userCarts[from]) {
+        userCarts[from] = [];
+      }
 
-      // Auto reply when user types "menu"
-      if (msgText === "menu") {
-        await sendMessage(from, 
-          "👋 Welcome to Zenvyro Labs!\n\n" +
-          "1️⃣ Web Development\n" +
-          "2️⃣ App Development\n" +
-          "3️⃣ AI Automation\n\n" +
-          "Reply with a number to continue."
+      console.log("📩 Message:", msgText);
+
+      // ==============================
+      // 👋 Greeting
+      // ==============================
+      if (
+        msgText.includes("hi") ||
+        msgText.includes("hello") ||
+        msgText.includes("salam") ||
+        msgText === "menu"
+      ) {
+        await sendMessage(
+          from,
+          "🍔 *Welcome to Zenvyro Fast Food!*\n\n" +
+            "🔥 Fresh • Hot • Delivered Fast\n\n" +
+            "You can order like this:\n" +
+            "👉 2 zinger\n" +
+            "👉 1 pizza\n" +
+            "👉 3 fries\n\n" +
+            "Our Menu:\n" +
+            "• Zinger - Rs 450\n" +
+            "• Pizza - Rs 899\n" +
+            "• Fries - Rs 250\n" +
+            "• Shawarma - Rs 300\n\n" +
+            "What would you like to order?"
         );
-      } else {
-        await sendMessage(from, "🤖 Type *menu* to see available options.");
+      }
+
+      // ==============================
+      // 🛒 Add Item Logic
+      // ==============================
+      else if (Object.keys(menu).some(item => msgText.includes(item))) {
+        const quantityMatch = msgText.match(/\d+/);
+        const qty = quantityMatch ? parseInt(quantityMatch[0]) : 1;
+
+        const itemName = Object.keys(menu).find(item =>
+          msgText.includes(item)
+        );
+
+        userCarts[from].push({
+          item: itemName,
+          qty: qty,
+          price: menu[itemName]
+        });
+
+        await sendMessage(
+          from,
+          `✅ ${qty} ${itemName}(s) added to cart.\n\n` +
+            `Type MORE to add more items\n` +
+            `Type CART to view cart\n` +
+            `Type CONFIRM to place order`
+        );
+      }
+
+      // ==============================
+      // 🧾 View Cart
+      // ==============================
+      else if (msgText === "cart") {
+        const cart = userCarts[from];
+
+        if (cart.length === 0) {
+          await sendMessage(from, "🛒 Your cart is empty.");
+        } else {
+          let total = 0;
+          let summary = "🧾 *Your Cart:*\n\n";
+
+          cart.forEach(item => {
+            const itemTotal = item.qty * item.price;
+            total += itemTotal;
+
+            summary += `• ${item.qty} ${item.item} = Rs ${itemTotal}\n`;
+          });
+
+          summary += `\n💰 Total: Rs ${total}\n\nType CONFIRM to order`;
+
+          await sendMessage(from, summary);
+        }
+      }
+
+      // ==============================
+      // ✅ Confirm Order
+      // ==============================
+      else if (msgText === "confirm") {
+        const cart = userCarts[from];
+
+        if (cart.length === 0) {
+          await sendMessage(from, "🛒 Your cart is empty.");
+        } else {
+          userCarts[from] = [];
+
+          await sendMessage(
+            from,
+            "🎉 *Order Confirmed!*\n\n" +
+              "📍 Please send your location.\n\n" +
+              "Our rider will reach you soon 🚴‍♂️"
+          );
+        }
+      }
+
+      // ==============================
+      // ❌ Clear Cart
+      // ==============================
+      else if (msgText === "clear") {
+        userCarts[from] = [];
+        await sendMessage(from, "🗑 Cart cleared.");
+      }
+
+      // ==============================
+      // 🤖 Fallback
+      // ==============================
+      else {
+        await sendMessage(
+          from,
+          "🤖 I didn’t understand.\n\n" +
+            "Try:\n" +
+            "👉 2 zinger\n" +
+            "👉 1 pizza\n\n" +
+            "Or type MENU"
+        );
       }
     }
 
@@ -69,7 +194,7 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ==============================
-// 📤 Send WhatsApp Message
+// 📤 Send Message Function
 // ==============================
 async function sendMessage(to, message) {
   try {
@@ -88,8 +213,6 @@ async function sendMessage(to, message) {
         }
       }
     );
-
-    console.log("✅ Message sent");
   } catch (error) {
     console.error("❌ Send error:", error.response?.data || error.message);
   }
